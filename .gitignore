@@ -1,0 +1,14 @@
+
+
+node_modules
+dist
+dist-ssr
+*.local
+
+env/
+__pycache__/
+*.pyc
+.idea/ 
+.env
+.assets/b
+.dependencias/
