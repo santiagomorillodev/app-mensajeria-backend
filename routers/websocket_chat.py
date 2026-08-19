@@ -1,38 +1,46 @@
-from typing import List
+from typing import List, Optional
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from pydantic import BaseModel
+from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import or_, func
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends
-from sqlalchemy.orm import Session
-from sqlalchemy import or_
-
-from config import get_db
-from models import (
-    ConversationModel,
-    MessageModel
-)
+from config import SessionLocal  # Importa la fábrica de sesiones directamente
+from models import ConversationModel, MessageModel
 from sockets import ConnectionManager
-from utils import get_last_message
-
 
 router = APIRouter(
     prefix="/api/v1/ws",
     tags=["WebSocket"],
 )
 
-
 manager = ConnectionManager()
 
+# ============================================================
+# SCHEMAS PYDANTIC PARA VALIDACIÓN
+# ============================================================
+
+class SendMessageSchema(BaseModel):
+    type: str
+    conversation_id: int
+    content: str
+
+class MarkReadSchema(BaseModel):
+    type: str
+    conversation_id: int
+
 
 # ============================================================
-# OBTENER CONVERSACIONES DEL USUARIO
+# CONSULTAS EFICIENTES A LA BASE DE DATOS
 # ============================================================
 
-def fetch_user_conversations(
-    user_id: int,
-    db: Session
-) -> List[dict]:
-
+def fetch_user_conversations(user_id: int, db: Session) -> List[dict]:
+    # Traemos las conversaciones e indicamos eager loading de las relaciones de usuario
     conversations = (
         db.query(ConversationModel)
+        .options(
+            joinedload(ConversationModel.first_user),
+            joinedload(ConversationModel.second_user)
+        )
         .filter(
             or_(
                 ConversationModel.first_user_id == user_id,
@@ -45,560 +53,172 @@ def fetch_user_conversations(
     if not conversations:
         return []
 
-
     result = []
-
-    current_user_dict = {
-        "id": user_id
-    }
-
-
     for conv in conversations:
+        is_first_user = conv.first_user_id == user_id
+        other_user = conv.second_user if is_first_user else conv.first_user
+        recipient_id = conv.second_user_id if is_first_user else conv.first_user_id
 
-        if conv.first_user_id == user_id:
+        # Obtener último mensaje
+        last_message = (
+            db.query(MessageModel)
+            .filter(MessageModel.conversation_id == conv.id)
+            .order_by(MessageModel.created.desc())
+            .first()
+        )
 
-            other_user = conv.second_user
-            recipient_id = conv.second_user_id
-
-        else:
-
-            other_user = conv.first_user
-            recipient_id = conv.first_user_id
-
-
-        last_message_info = (
-            get_last_message(
-                conv.id,
-                current_user_dict,
-                db
+        # Contar no leídos
+        unread_count = (
+            db.query(func.count(MessageModel.message_id))
+            .filter(
+                MessageModel.conversation_id == conv.id,
+                MessageModel.sender_id != user_id,
+                MessageModel.status == False
             )
-            or {}
+            .scalar()
         )
 
-
-        last_message = last_message_info.get(
-            "last_message"
-        )
-
-
-        # Convertimos el objeto SQLAlchemy
-        # a un JSON que React Native pueda recibir.
+        last_message_data = None
         if last_message:
-
             last_message_data = {
                 "message_id": last_message.message_id,
                 "sender_id": last_message.sender_id,
                 "conversation_id": last_message.conversation_id,
                 "content": last_message.content,
-                "image_url": last_message.image_url,
-                "public_id": last_message.public_id,
-                "created": (
-                    last_message.created.isoformat()
-                    if last_message.created
-                    else None
-                ),
+                "image_url": getattr(last_message, "image_url", None),
+                "public_id": getattr(last_message, "public_id", None),
+                "created": last_message.created.isoformat() if last_message.created else None,
                 "status": last_message.status
             }
 
-        else:
-
-            last_message_data = None
-
-
         result.append({
-
             "conversation_id": conv.id,
-
             "recipient_id": recipient_id,
-
-            "name": (
-                other_user.name
-                if other_user
-                else ""
-            ),
-
-            "username": (
-                other_user.username
-                if other_user
-                else ""
-            ),
-
-            "photo": (
-                getattr(
-                    other_user,
-                    "avatar_url",
-                    ""
-                )
-                if other_user
-                else ""
-            ),
-
+            "name": getattr(other_user, "name", "") if other_user else "",
+            "username": getattr(other_user, "username", "") if other_user else "",
+            "photo": getattr(other_user, "avatar_url", "") if other_user else "",
             "last_message": last_message_data,
-
-            "count_unread_messages":
-                last_message_info.get(
-                    "count_unread_messages",
-                    0
-                )
+            "count_unread_messages": unread_count or 0
         })
-
 
     return result
 
 
-# ============================================================
-# ENCONTRAR CONVERSACIÓN
-# ============================================================
-
-def get_conversation_for_users(
-    conversation_id: int,
-    user_id: int,
-    db: Session
-):
-
-    conversation = (
+def get_conversation_for_users(conversation_id: int, user_id: int, db: Session) -> Optional[ConversationModel]:
+    return (
         db.query(ConversationModel)
         .filter(
-            ConversationModel.id == conversation_id
+            ConversationModel.id == conversation_id,
+            or_(
+                ConversationModel.first_user_id == user_id,
+                ConversationModel.second_user_id == user_id
+            )
         )
         .first()
     )
 
 
-    if not conversation:
-        return None
-
-
-    # El usuario debe pertenecer
-    # específicamente a ESTA conversación.
-    if (
-        conversation.first_user_id != user_id
-        and
-        conversation.second_user_id != user_id
-    ):
-
-        return None
-
-
-    return conversation
-
-
 # ============================================================
-# WEBSOCKET
+# WEBSOCKET ENDPOINT
 # ============================================================
 
 @router.websocket("/user/{user_id}")
-async def user_socket(
-    websocket: WebSocket,
-    user_id: int,
-    db: Session = Depends(get_db)
-):
+async def user_socket(websocket: WebSocket, user_id: int):
+    await manager.connect(user_id, websocket)
 
-    await manager.connect(
-        user_id,
-        websocket
-    )
-
-
-    try:
-
-        # ====================================================
-        # SINCRONIZACIÓN INICIAL
-        # ====================================================
-
-        conversations_data = fetch_user_conversations(
-            user_id,
-            db
-        )
-
-
+    # 1. Sincronización Inicial con sesión efímera
+    with SessionLocal() as db:
+        conversations_data = fetch_user_conversations(user_id, db)
         await websocket.send_json({
-
             "type": "conversation_sync",
-
-            "conversations":
-                conversations_data
+            "conversations": conversations_data
         })
 
-
-        # ====================================================
-        # ESCUCHAR EVENTOS
-        # ====================================================
-
+    try:
         while True:
-
             data = await websocket.receive_json()
-
-            print(
-                f"📩 Evento WS recibido "
-                f"de usuario {user_id}:",
-                data
-            )
-
-
             event_type = data.get("type")
 
-
-            # =================================================
-            # ENVIAR MENSAJE
-            # =================================================
-
-            if event_type == "send_message":
-
-                conversation_id = data.get(
-                    "conversation_id"
-                )
-
-                content = data.get(
-                    "content",
-                    ""
-                ).strip()
-
-
-                if not conversation_id:
-
-                    await websocket.send_json({
-                        "type": "error",
-                        "message":
-                            "conversation_id es requerido"
-                    })
-
-                    continue
-
-
-                if not content:
-
-                    await websocket.send_json({
-                        "type": "error",
-                        "message":
-                            "El mensaje está vacío"
-                    })
-
-                    continue
-
-
-                # ---------------------------------------------
-                # BUSCAR CONVERSACIÓN
-                # ---------------------------------------------
-
-                conversation = (
-                    get_conversation_for_users(
-                        conversation_id,
-                        user_id,
-                        db
-                    )
-                )
-
-
-                if not conversation:
-
-                    await websocket.send_json({
-                        "type": "error",
-                        "message":
-                            "No perteneces a esta conversación"
-                    })
-
-                    continue
-
-
-                # ---------------------------------------------
-                # IDENTIFICAR RECEPTOR
-                # ---------------------------------------------
-
-                if (
-                    conversation.first_user_id
-                    == user_id
-                ):
-
-                    recipient_id = (
-                        conversation.second_user_id
-                    )
-
-                else:
-
-                    recipient_id = (
-                        conversation.first_user_id
-                    )
-
-
-                # ---------------------------------------------
-                # CREAR MENSAJE
-                # ---------------------------------------------
-
-                new_message = MessageModel(
-
-                    sender_id=user_id,
-
-                    conversation_id=conversation_id,
-
-                    content=content,
-
-                    status=False
-                )
-
-
-                db.add(new_message)
-
-                db.commit()
-
-                db.refresh(new_message)
-
-
-                # ---------------------------------------------
-                # CREAR PAYLOAD
-                # ---------------------------------------------
-
-                message_data = {
-
-                    "message_id":
-                        new_message.message_id,
-
-                    "sender_id":
-                        new_message.sender_id,
-
-                    "conversation_id":
-                        new_message.conversation_id,
-
-                    "content":
-                        new_message.content,
-
-                    "image_url":
-                        new_message.image_url,
-
-                    "public_id":
-                        new_message.public_id,
-
-                    "created":
-                        (
-                            new_message.created.isoformat()
-                            if new_message.created
-                            else None
-                        ),
-
-                    "status":
-                        new_message.status
-                }
-
-
-                # ---------------------------------------------
-                # ENVIAR AL EMISOR
-                # ---------------------------------------------
-
-                await manager.send_personal_message(
-
-                    {
-                        "type": "new_message",
-
-                        "message": message_data,
-
-                        "is_sender": True
-                    },
-
-                    user_id
-                )
-
-
-                # ---------------------------------------------
-                # ENVIAR AL RECEPTOR
-                # ---------------------------------------------
-
-                await manager.send_personal_message(
-
-                    {
-                        "type": "new_message",
-
-                        "message": message_data,
-
-                        "is_sender": False
-                    },
-
-                    recipient_id
-                )
-
-
-                # ---------------------------------------------
-                # ACTUALIZAR CONVERSACIONES
-                # ---------------------------------------------
-
-                sender_conversations = (
-                    fetch_user_conversations(
-                        user_id,
-                        db
-                    )
-                )
-
-
-                await manager.send_personal_message(
-
-                    {
-                        "type":
-                            "conversation_update",
-
-                        "conversations":
-                            sender_conversations
-                    },
-
-                    user_id
-                )
-
-
-                recipient_conversations = (
-                    fetch_user_conversations(
-                        recipient_id,
-                        db
-                    )
-                )
-
-
-                await manager.send_personal_message(
-
-                    {
-                        "type":
-                            "conversation_update",
-
-                        "conversations":
-                            recipient_conversations
-                    },
-
-                    recipient_id
-                )
-
-
-            # =================================================
-            # MARCAR MENSAJES COMO LEÍDOS
-            # =================================================
-
-            elif event_type == "mark_messages_read":
-
-                conversation_id = data.get(
-                    "conversation_id"
-                )
-
-
-                if not conversation_id:
-
-                    await websocket.send_json({
-                        "type": "error",
-                        "message":
-                            "conversation_id es requerido"
-                    })
-
-                    continue
-
-
-                # ---------------------------------------------
-                # VERIFICAR CONVERSACIÓN
-                # ---------------------------------------------
-
-                conversation = (
-                    get_conversation_for_users(
-                        conversation_id,
-                        user_id,
-                        db
-                    )
-                )
-
-
-                if not conversation:
-
-                    await websocket.send_json({
-                        "type": "error",
-                        "message":
-                            "No perteneces a esta conversación"
-                    })
-
-                    continue
-
-
-                # ---------------------------------------------
-                # MARCAR COMO LEÍDOS
-                # ---------------------------------------------
-
-                (
-                    db.query(MessageModel)
-                    .filter(
-                        MessageModel.conversation_id
-                        == conversation_id,
-
-                        MessageModel.sender_id
-                        != user_id,
-
-                        MessageModel.status
-                        == False
-                    )
-                    .update(
-                        {
-                            MessageModel.status: True
-                        },
-
-                        synchronize_session=False
-                    )
-                )
-
-
-                db.commit()
-
-
-                # ---------------------------------------------
-                # ACTUALIZAR LISTA DEL USUARIO
-                # ---------------------------------------------
-
-                conversations_data = (
-                    fetch_user_conversations(
-                        user_id,
-                        db
-                    )
-                )
-
-
-                await websocket.send_json({
-
-                    "type":
-                        "conversation_update",
-
-                    "conversations":
-                        conversations_data
-                })
-
-
-            # =================================================
-            # EVENTO DESCONOCIDO
-            # =================================================
-
-            else:
-
-                print(
-                    f"⚠️ Evento desconocido: "
-                    f"{event_type}"
-                )
-
-
-                await websocket.send_json({
-
-                    "type": "error",
-
-                    "message":
-                        f"Unknown event type: "
-                        f"{event_type}"
-                })
-
+            # Manejamos cada evento abriendo y cerrando una sesión dedicada
+            with SessionLocal() as db:
+                try:
+                    if event_type == "send_message":
+                        payload = SendMessageSchema(**data)
+                        content_clean = payload.content.strip()
+
+                        if not content_clean:
+                            await websocket.send_json({"type": "error", "message": "El mensaje está vacío"})
+                            continue
+
+                        conversation = get_conversation_for_users(payload.conversation_id, user_id, db)
+                        if not conversation:
+                            await websocket.send_json({"type": "error", "message": "No perteneces a esta conversación"})
+                            continue
+
+                        recipient_id = (
+                            conversation.second_user_id if conversation.first_user_id == user_id 
+                            else conversation.first_user_id
+                        )
+
+                        new_message = MessageModel(
+                            sender_id=user_id,
+                            conversation_id=payload.conversation_id,
+                            content=content_clean,
+                            status=False
+                        )
+                        db.add(new_message)
+                        db.commit()
+                        db.refresh(new_message)
+
+                        message_data = {
+                            "message_id": new_message.message_id,
+                            "sender_id": new_message.sender_id,
+                            "conversation_id": new_message.conversation_id,
+                            "content": new_message.content,
+                            "image_url": getattr(new_message, "image_url", None),
+                            "public_id": getattr(new_message, "public_id", None),
+                            "created": new_message.created.isoformat() if new_message.created else None,
+                            "status": new_message.status
+                        }
+
+                        # Notificar a los clientes
+                        await manager.send_personal_message({"type": "new_message", "message": message_data, "is_sender": True}, user_id)
+                        await manager.send_personal_message({"type": "new_message", "message": message_data, "is_sender": False}, recipient_id)
+
+                        # Actualizar lista de conversaciones en ambos clientes
+                        sender_convs = fetch_user_conversations(user_id, db)
+                        recipient_convs = fetch_user_conversations(recipient_id, db)
+
+                        await manager.send_personal_message({"type": "conversation_update", "conversations": sender_convs}, user_id)
+                        await manager.send_personal_message({"type": "conversation_update", "conversations": recipient_convs}, recipient_id)
+
+                    elif event_type == "mark_messages_read":
+                        payload = MarkReadSchema(**data)
+                        
+                        conversation = get_conversation_for_users(payload.conversation_id, user_id, db)
+                        if not conversation:
+                            await websocket.send_json({"type": "error", "message": "No perteneces a esta conversación"})
+                            continue
+
+                        db.query(MessageModel).filter(
+                            MessageModel.conversation_id == payload.conversation_id,
+                            MessageModel.sender_id != user_id,
+                            MessageModel.status == False
+                        ).update({MessageModel.status: True}, synchronize_session=False)
+                        db.commit()
+
+                        conversations_data = fetch_user_conversations(user_id, db)
+                        await websocket.send_json({
+                            "type": "conversation_update",
+                            "conversations": conversations_data
+                        })
+
+                    else:
+                        await websocket.send_json({"type": "error", "message": f"Unknown event type: {event_type}"})
+
+                except Exception as inner_error:
+                    db.rollback()
+                    await websocket.send_json({"type": "error", "message": f"Error procesando evento: {str(inner_error)}"})
 
     except WebSocketDisconnect:
-
-        manager.disconnect(
-            user_id,
-            websocket
-        )
-
-
-    except Exception as error:
-
-        print(
-            "❌ Error en WebSocket:",
-            str(error)
-        )
-
-        manager.disconnect(
-            user_id,
-            websocket
-        )
+        manager.disconnect(user_id, websocket)
