@@ -111,11 +111,34 @@ def get_conversation_for_users(conversation_id: int, user_id: int, db: Session) 
     )
 
 
-@router.get("/test")
-def websocket_test():
-    return {
-        "message": "WebSocket router loaded correctly"
-    }
+@router.websocket("/test")
+async def websocket_test(websocket: WebSocket):
+
+    print("🔥🔥🔥 PETICIÓN WEBSOCKET TEST RECIBIDA 🔥🔥🔥")
+
+    await websocket.accept()
+
+    print("🔥🔥🔥 WEBSOCKET TEST ACEPTADO 🔥🔥🔥")
+
+    await websocket.send_json({
+        "type": "test",
+        "message": "WebSocket funcionando correctamente en Render"
+    })
+
+    try:
+        while True:
+            data = await websocket.receive_json()
+
+            print("📩 TEST RECIBIDO:", data)
+
+            await websocket.send_json({
+                "type": "echo",
+                "data": data
+            })
+
+    except WebSocketDisconnect:
+
+        print("🔴 TEST WEBSOCKET DESCONECTADO")
 
 @router.websocket("/user/{user_id}")
 async def user_socket(websocket: WebSocket, user_id: int):
