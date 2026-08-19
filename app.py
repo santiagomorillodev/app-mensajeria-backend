@@ -15,7 +15,6 @@ origins = [
     "http://localhost:3000",
     "https://localhost:5173",
     "https://messagin-frontend.vercel.app",
-    "https://messagin-backend.onrender.com",
     "https://messagin-frontend-git-main-santiagomorillodevs-projects.vercel.app",
 ]
 
@@ -36,18 +35,36 @@ app.include_router(post)
 app.include_router(socket)
 app.include_router(signaling)
 
-print("\n================ RUTAS REGISTRADAS ================\n")
 
-for route in app.routes:
-    print(
-        f"PATH: {route.path} | "
-        f"NAME: {route.name} | "
-        f"TYPE: {type(route).__name__}"
-    )
-
-print("\n====================================================\n")
-
-
-@app.get('/')
+@app.get("/")
 def root():
-    return {'message': 'Api running'}
+    return {
+        "message": "Api running"
+    }
+
+
+# ============================================================
+# DEBUG: MOSTRAR RUTAS REGISTRADAS
+# ============================================================
+
+@app.on_event("startup")
+async def show_routes():
+
+    print("\n")
+    print("====================================================")
+    print("            RUTAS REGISTRADAS EN FASTAPI")
+    print("====================================================")
+
+    for route in app.routes:
+
+        print(
+            "PATH:",
+            getattr(route, "path", None),
+            "| NAME:",
+            getattr(route, "name", None),
+            "| TYPE:",
+            type(route).__name__
+        )
+
+    print("====================================================")
+    print("\n")
