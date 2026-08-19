@@ -15,10 +15,9 @@ router = APIRouter(
 
 manager = ConnectionManager()
 
-# CON EL COMMIT
-# ============================================================
-# SCHEMAS PYDANTIC PARA VALIDACIÓN
-# ============================================================
+
+print("🔥🔥🔥 SOCKET.PY CARGADO 🔥🔥🔥")
+print("🔥🔥🔥 ROUTER WEBSOCKET CREADO 🔥🔥🔥")
 
 class SendMessageSchema(BaseModel):
     type: str
@@ -30,12 +29,7 @@ class MarkReadSchema(BaseModel):
     conversation_id: int
 
 
-# ============================================================
-# CONSULTAS EFICIENTES A LA BASE DE DATOS
-# ============================================================
-
 def fetch_user_conversations(user_id: int, db: Session) -> List[dict]:
-    # Traemos las conversaciones e indicamos eager loading de las relaciones de usuario
     conversations = (
         db.query(ConversationModel)
         .options(
@@ -60,7 +54,6 @@ def fetch_user_conversations(user_id: int, db: Session) -> List[dict]:
         other_user = conv.second_user if is_first_user else conv.first_user
         recipient_id = conv.second_user_id if is_first_user else conv.first_user_id
 
-        # Obtener último mensaje
         last_message = (
             db.query(MessageModel)
             .filter(MessageModel.conversation_id == conv.id)
@@ -68,7 +61,6 @@ def fetch_user_conversations(user_id: int, db: Session) -> List[dict]:
             .first()
         )
 
-        # Contar no leídos
         unread_count = (
             db.query(func.count(MessageModel.message_id))
             .filter(
@@ -119,15 +111,18 @@ def get_conversation_for_users(conversation_id: int, user_id: int, db: Session) 
     )
 
 
-# ============================================================
-# WEBSOCKET ENDPOINT
-# ============================================================
+@router.get("/test")
+def websocket_test():
+    return {
+        "message": "WebSocket router loaded correctly"
+    }
 
 @router.websocket("/user/{user_id}")
 async def user_socket(websocket: WebSocket, user_id: int):
+    print("🔥🔥🔥 WEBSOCKET ENDPOINT ALCANZADO 🔥🔥🔥")
+    print(f"🔥 USER ID: {user_id}")
     await manager.connect(user_id, websocket)
 
-    # 1. Sincronización Inicial con sesión efímera
     with SessionLocal() as db:
         conversations_data = fetch_user_conversations(user_id, db)
         await websocket.send_json({
@@ -140,7 +135,6 @@ async def user_socket(websocket: WebSocket, user_id: int):
             data = await websocket.receive_json()
             event_type = data.get("type")
 
-            # Manejamos cada evento abriendo y cerrando una sesión dedicada
             with SessionLocal() as db:
                 try:
                     if event_type == "send_message":
@@ -182,11 +176,9 @@ async def user_socket(websocket: WebSocket, user_id: int):
                             "status": new_message.status
                         }
 
-                        # Notificar a los clientes
                         await manager.send_personal_message({"type": "new_message", "message": message_data, "is_sender": True}, user_id)
                         await manager.send_personal_message({"type": "new_message", "message": message_data, "is_sender": False}, recipient_id)
 
-                        # Actualizar lista de conversaciones en ambos clientes
                         sender_convs = fetch_user_conversations(user_id, db)
                         recipient_convs = fetch_user_conversations(recipient_id, db)
 

@@ -17,11 +17,9 @@ async def signaling_socket(websocket: WebSocket, user_id: int):
 
             target = data.get("target")
             if not target:
-                # Si no hay target especificado, no reenviar
                 continue
 
             if target == user_id:
-                # Ignorar mensajes a sí mismo
                 continue
 
             if target in active_connections:
@@ -33,7 +31,6 @@ async def signaling_socket(websocket: WebSocket, user_id: int):
         print("ERROR:", e)
 
     finally:
-        # Limpiar conexión
         if user_id in active_connections:
             del active_connections[user_id]
         print("User disconnected:", user_id)
