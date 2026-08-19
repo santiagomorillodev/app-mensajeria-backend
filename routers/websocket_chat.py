@@ -4,7 +4,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import or_, func
 
-from config import SessionLocal  # Importa la fábrica de sesiones directamente
+from config.session import SessionLocal
 from models import ConversationModel, MessageModel
 from sockets import ConnectionManager
 
