@@ -1,15 +1,15 @@
-from pydantic import BaseModel, EmailStr, validator, ConfigDict
+from pydantic import BaseModel
 from typing import Optional
-import re
-from datetime import datetime
 
-class PostBase(BaseModel):
-    name: str
-    age: int 
-    post:str
-    
-    
-class PostCreate(PostBase):
-    email: EmailStr
-    password: str
-    avatar_url:Optional[str] = None
+
+class PostCreate(BaseModel):
+    content: Optional[str] = None
+    image_base64: Optional[str] = None
+
+
+class PostResponse(BaseModel):
+    id: int
+    content: Optional[str] = None
+    url: Optional[str] = None
+    public_id: Optional[str] = None
+    created: Optional[str] = None

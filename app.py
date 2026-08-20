@@ -43,10 +43,6 @@ def root():
     }
 
 
-# ============================================================
-# DEBUG: MOSTRAR RUTAS REGISTRADAS
-# ============================================================
-
 @app.on_event("startup")
 async def show_routes():
 

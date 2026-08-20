@@ -501,11 +501,6 @@ async def update_avatar(
         )
 
     try:
-
-        # ========================================================
-        # 2. ELIMINAR AVATAR ANTERIOR
-        # ========================================================
-
         if current_user.avatar_public_id:
 
             try:
@@ -520,10 +515,6 @@ async def update_avatar(
                     f"el avatar anterior: {delete_error}"
                 )
 
-        # ========================================================
-        # 3. SUBIR BASE64 A CLOUDINARY
-        # ========================================================
-
         result = uploader.upload(
             data.image_base64,
             resource_type="image",
@@ -537,20 +528,12 @@ async def update_avatar(
             "public_id"
         )
 
-        # ========================================================
-        # 4. VALIDAR RESPUESTA CLOUDINARY
-        # ========================================================
-
         if not new_avatar_url or not new_public_id:
 
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Cloudinary no devolvió los datos esperados.",
             )
-
-        # ========================================================
-        # 5. ACTUALIZAR USUARIO
-        # ========================================================
 
         current_user.avatar_url = new_avatar_url
 
@@ -559,10 +542,6 @@ async def update_avatar(
         db.commit()
 
         db.refresh(current_user)
-
-        # ========================================================
-        # 6. RESPUESTA
-        # ========================================================
 
         return {
             "message": "Foto de perfil actualizada correctamente",
@@ -610,11 +589,6 @@ async def update_banner(
         )
 
     try:
-
-        # ========================================================
-        # 2. ELIMINAR BANNER ANTERIOR
-        # ========================================================
-
         if current_user.banner_public_id:
 
             try:
@@ -629,10 +603,6 @@ async def update_banner(
                     f"el banner anterior: {delete_error}"
                 )
 
-        # ========================================================
-        # 3. SUBIR BASE64 A CLOUDINARY
-        # ========================================================
-
         result = uploader.upload(
             data.image_base64,
             resource_type="image",
@@ -646,20 +616,12 @@ async def update_banner(
             "public_id"
         )
 
-        # ========================================================
-        # 4. VALIDAR RESPUESTA CLOUDINARY
-        # ========================================================
-
         if not new_banner_url or not new_public_id:
 
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Cloudinary no devolvió los datos esperados.",
             )
-
-        # ========================================================
-        # 5. ACTUALIZAR USUARIO
-        # ========================================================
 
         current_user.banner_url = new_banner_url
 
@@ -668,10 +630,6 @@ async def update_banner(
         db.commit()
 
         db.refresh(current_user)
-
-        # ========================================================
-        # 6. RESPUESTA
-        # ========================================================
 
         return {
             "message": "Foto de portada actualizada correctamente",
