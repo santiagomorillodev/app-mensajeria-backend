@@ -8,6 +8,10 @@ class UserBase(BaseModel):
     age: int
     username: str
 
+
+class ImageBase64Request(BaseModel):
+    image_base64: str
+
 class UserCreate(UserBase):
     email: EmailStr
     password: str
