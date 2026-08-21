@@ -2,7 +2,7 @@ from typing import Optional
 
 from fastapi import APIRouter, HTTPException, status, Depends, Header
 from models import UserModel, ConversationModel, MessageModel
-from schemas import UserConversation, ConversationOut, TokenRead
+from schemas import UserConversation, ConversationOut, TokenRead, DeleteConversationsRequest
 from sqlalchemy import and_, or_, select, func
 from sqlalchemy.orm import Session
 from config import get_db
@@ -75,7 +75,6 @@ def get_last_message(
         "count_unread_messages":
             count_unread_message
     }
-
 
 
 @root.get('/all')
@@ -215,11 +214,6 @@ def get_conversation(second_user:int, authorization: str = Header(None), db:Sess
     except ValueError as error:
         print(error)
         
-
-
-
-
-
 @root.get("/unread")
 def unread_messages(token:TokenRead, db: Session = Depends(get_db)):
     current_user = jwt.decode_access_token(token=token.token)
@@ -238,19 +232,31 @@ def unread_messages(token:TokenRead, db: Session = Depends(get_db)):
     return { row.conversation_id: row.unread for row in rows }
 
 
-@root.delete('/')
-def delete_conversation(user:UserConversation, authorization:str = Header(None), db:Session = Depends(get_db)):
+@root.delete('/delete-conversations')
+def delete_conversations(
+    payload: DeleteConversationsRequest, 
+    authorization: str = Header(None), 
+    db: Session = Depends(get_db)
+):
     try:
-        token = authorization.split(" ")[1] if authorization else None
-        current_user = jwt.decode_access_token(token=token)
-        conversation = search_conversation(current_user, user, db)
-        if not conversation:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail='The conversation not exist'
-            )
-        db.delete(conversation)
+        current_user = get_current_user(authorization, db)
+        deleted_count = 0
+
+        # Iteramos sobre los IDs recibidos para buscar y borrar cada conversación
+        for r_id in payload.recipient_ids:
+            user = db.query(UserModel).filter(UserModel.id == r_id).first()
+            if user:
+                conversation = search_conversation(current_user, user, db)
+                if conversation:
+                    db.delete(conversation)
+                    deleted_count += 1
+        
         db.commit()
-        return 'Conversation delete'
-    except ValueError as error:
+        return {"detail": f"{deleted_count} conversation(s) deleted"}
+
+    except Exception as error:
         print(error)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error deleting conversations"
+        )

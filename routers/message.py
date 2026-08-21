@@ -1,11 +1,12 @@
 from fastapi import APIRouter, File, Form, HTTPException, Header, UploadFile, status, Depends
 from models import MessageModel, ConversationModel
 from cloudinary import uploader
-from schemas import MessageCreate, MessageResponse
+from schemas import MessageCreate, MessageResponse, DeleteMessagesRequest
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, and_
 from config import get_db
 from security import jwt
+from security.get_data_user import get_current_user
 
 
 root = APIRouter(prefix="/api/v1/messages", tags=['Messages'])
@@ -50,7 +51,6 @@ def create_message(message: MessageCreate, authorization:str = Header(None), db:
     except ValueError as error:
         print(error)
         
-
 @root.get("/chat-{id}", response_model=list[MessageResponse])
 def get_messages(
     id: int,
@@ -132,23 +132,38 @@ def get_messages(
             status_code=500,
             detail=str(error)
         )
-@root.delete('/delete-{message}')
-def delete_message(message: int, authorization:str = Header(None), db:Session = Depends(get_db)):
+
+@root.delete('/delete')
+def delete_messages(
+    payload: DeleteMessagesRequest, 
+    authorization: str = Header(None), 
+    db: Session = Depends(get_db)
+):
     try:
-        token = authorization.split(" ")[1] if authorization else None
-        current_user = jwt.decode_access_token(token)
-        message_db = db.query(MessageModel).filter(((MessageModel.message_id == message) & (MessageModel.sender_id == current_user["id"]))).first()
-        if not message_db:
+        current_user = get_current_user(authorization, db)
+        
+        deleted_count = db.query(MessageModel).filter(
+            MessageModel.message_id.in_(payload.message_ids),
+            MessageModel.sender_id == current_user.id
+        ).delete(synchronize_session=False)
+        
+        db.commit()
+        
+        # Opcional: Validar si realmente se borró algo
+        if deleted_count == 0:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail='Message not found'
+                detail='No messages found or not authorized to delete'
             )
+            
+        return {"detail": f"{deleted_count} message(s) deleted"}
         
-        db.delete(message_db)
-        db.commit()
-        return 'Message Deleted'
-    except ValueError as error:
+    except Exception as error:
         print(error)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error deleting messages"
+        )
         
 @root.post('/message/change-status/{conversation_id}')
 def change_status(conversation_id: int, authorization:str = Header(None), db: Session = Depends(get_db)):

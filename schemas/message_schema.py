@@ -3,7 +3,7 @@ from datetime import datetime
 
 from pydantic import BaseModel
 from datetime import datetime
-from typing import Optional
+from typing import List, Optional
 
 class MessageBase(BaseModel):
     content: Optional[str] = None
@@ -12,6 +12,9 @@ class MessageBase(BaseModel):
 
 class MessageCreate(MessageBase):
     pass
+
+class DeleteMessagesRequest(BaseModel):
+    message_ids: List[int]
 
 class MessageResponse(BaseModel):
     message_id: int

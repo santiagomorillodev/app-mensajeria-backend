@@ -1,29 +1,16 @@
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from sqlalchemy.orm import Session, joinedload
-from models import (
-    PostModel,
-    UserModel,
-    FollowerModel,
-    NotificationModel,
-)
+from models import ( PostModel, UserModel, FollowerModel, NotificationModel,)
 from config import get_db
 from security import get_current_user
 from cloudinary import uploader, api
-
 from schemas import PostCreate
 
-root = APIRouter(
-    prefix="/api/v1/post",
-    tags=["Post"]
-)
+root = APIRouter( prefix="/api/v1/post", tags=["Post"])
 
 
 @root.post("/create")
-async def create_post(
-    data: PostCreate,
-    authorization: str = Header(None),
-    db: Session = Depends(get_db),
-):
+async def create_post( data: PostCreate, authorization: str = Header(None), db: Session = Depends(get_db)):
     current_user = get_current_user(authorization, db)
 
     if not data.content and not data.image_base64:
@@ -37,14 +24,8 @@ async def create_post(
         public_id = None
 
         if data.image_base64:
-
             try:
-
-                result = uploader.upload(
-                    data.image_base64,
-                    resource_type="image"
-                )
-
+                result = uploader.upload( data.image_base64, resource_type="image")
                 image_url = result.get("secure_url")
                 public_id = result.get("public_id")
 
@@ -122,25 +103,16 @@ async def create_post(
         raise
 
     except Exception as e:
-
         db.rollback()
-
-        print(
-            f"❌ Error crítico creando post: {e}"
-        )
+        print(f"❌ Error crítico creando post: {e}")
 
         raise HTTPException(
             status_code=500,
             detail=f"Error creando post: {str(e)}"
         )
 
-
 @root.get("/{id}")
-def get_posts_current_user(
-    id: int,
-    db: Session = Depends(get_db)
-):
-
+def get_posts_current_user( id: int, db: Session = Depends(get_db)):
     posts = (
         db.query(PostModel)
         .filter(PostModel.id_user == id)
@@ -160,105 +132,57 @@ def get_posts_current_user(
     for post in posts:
 
         response.append({
-
             "id": post.id,
-
             "content": post.content,
-
             "url": post.url,
-
             "public_id": post.public_id,
-
             "created": post.created,
-
-            "likes": [
-                {
-                    "user_id": like.user_id
-                }
-                for like in post.likes
-            ],
-
+            "likes": [{"user_id": like.user_id}for like in post.likes],
             "user": {
-
                 "user_id": post.user.id,
-
                 "username": post.user.username,
-
                 "name": post.user.name,
-
                 "avatar_url": post.user.avatar_url
             }
         })
 
     return response
 
-
-
 @root.delete("/delete/{id}")
-async def delete_post(
-    id: int,
-    current_user: UserModel = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-
+async def delete_post( id: int, authorization: str = Header(None), db: Session = Depends(get_db)):
+    current_user = get_current_user(authorization, db)
     try:
         post = (
             db.query(PostModel)
             .filter(
                 PostModel.id == id,
                 PostModel.id_user == current_user.id
-            )
-            .first()
+            ).first()
         )
 
         if not post:
-
             raise HTTPException(
                 status_code=404,
                 detail="Post no encontrado."
             )
 
         if post.public_id:
-
             try:
-
-                result = uploader.destroy(
-                    post.public_id,
-                    resource_type="image"
-                )
-
-                print(
-                    "🗑️ Cloudinary:",
-                    result
-                )
-
+                result = uploader.destroy( post.public_id, resource_type="image")
+                print("🗑️ Cloudinary:",result)
             except Exception as cloudinary_error:
-
-                print(
-                    "⚠️ No se pudo eliminar "
-                    "la imagen de Cloudinary:",
-                    cloudinary_error
-                )
+                print( "⚠️ No se pudo eliminar " "la imagen de Cloudinary:", cloudinary_error)
 
         db.delete(post)
-
         db.commit()
-
-        return {
-            "message": "Post eliminado correctamente",
-            "id": id
-        }
+        return { "message": "Post eliminado correctamente", "id": id}
 
     except HTTPException:
         raise
 
     except Exception as e:
-
         db.rollback()
-
-        print(
-            f"❌ Error eliminando post: {e}"
-        )
+        print(f"❌ Error eliminando post: {e}")
 
         raise HTTPException(
             status_code=500,

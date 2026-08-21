@@ -659,3 +659,35 @@ async def update_banner(
                 f"de portada: {str(e)}"
             ),
         )
+
+@root.delete("/delete/account", status_code=status.HTTP_200_OK)
+async def delete_account(
+    authorization: str = Header(None),
+    db: Session = Depends(get_db)
+):
+    current_user = get_current_user(authorization, db)
+
+    if not current_user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Credenciales inválidas"
+        )
+
+    # Eliminar imágenes de Cloudinary si existen
+    if current_user.avatar_public_id:
+        try:
+            uploader.destroy(current_user.avatar_public_id)
+        except Exception as e:
+            print(f"⚠️ Error al eliminar avatar en Cloudinary: {e}")
+
+    if current_user.banner_public_id:
+        try:
+            uploader.destroy(current_user.banner_public_id)
+        except Exception as e:
+            print(f"⚠️ Error al eliminar banner en Cloudinary: {e}")
+
+    # Eliminar usuario de la BD
+    db.delete(current_user)
+    db.commit()
+
+    return {"message": "Cuenta eliminada correctamente"}

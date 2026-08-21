@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import Optional
+from typing import List, Optional
 from datetime import datetime
 import re
 
@@ -17,6 +17,9 @@ class ConversationRead(ConversationBase):
 
 class ConversationRequest(BaseModel):
     id: int
+
+class DeleteConversationsRequest(BaseModel):
+    recipient_ids: List[int]
 
 class ConversationOut(BaseModel):
     id: int
